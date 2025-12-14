@@ -1,28 +1,32 @@
 import cv2
 import time
+import numpy as np
 import config as cfg
 from hand_engine import HandTracker
-from utils import OneEuroFilter, calculate_distance, map_range
+from utils import OneEuroFilter, calculate_distance
 from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
 
 def main():
-    # 1. Init Hardware
     cap = cv2.VideoCapture(cfg.CAMERA_ID)
     tracker = HandTracker()
     mouse = MouseController()
     keyboard = KeyboardController()
 
-    # 2. Init Filters (Start at 0,0)
-    x_filter = OneEuroFilter(time.time(), 0, min_cutoff=0.01, beta=0.5)
-    y_filter = OneEuroFilter(time.time(), 0, min_cutoff=0.01, beta=0.5)
+    # Heavy smoothing filters
+    x_filter = OneEuroFilter(time.time(), 0, min_cutoff=cfg.FILTER_MIN_CUTOFF, beta=cfg.FILTER_BETA)
+    y_filter = OneEuroFilter(time.time(), 0, min_cutoff=cfg.FILTER_MIN_CUTOFF, beta=cfg.FILTER_BETA)
     
     dragging = False
     zooming = False
     prev_y = 0
+    active_gesture = "IDLE"
 
-    print(">> VIRT MOUSE ENGINE STARTED")
-    print(">> [1 Finger] Move  |  [2 Fingers] Scroll  |  [3 Fingers] Zoom")
+    print(">> VIRT MOUSE STABLE MODE")
+    print(">> [FIST] = PAUSE MOUSE")
+    print(">> [INDEX] = MOVE")
+    print(">> [L-SHAPE] = ZOOM")
+    print(">> [PEACE] = SCROLL")
 
     while cap.isOpened():
         success, frame = cap.read()
@@ -31,56 +35,70 @@ def main():
         if cfg.MIRROR_MODE:
             frame = cv2.flip(frame, 1)
 
-        # Process Hand
+        h, w, _ = frame.shape
+        
+        # 1. Draw Active Area (White Box)
+        cv2.rectangle(frame, (cfg.ACTIVE_AREA_MARGIN, cfg.ACTIVE_AREA_MARGIN), 
+                      (w - cfg.ACTIVE_AREA_MARGIN, h - cfg.ACTIVE_AREA_MARGIN), 
+                      cfg.COLOR_BOX, 2)
+
         tracker.process(frame)
         lm = tracker.get_landmarks()
-        h, w, _ = frame.shape
         current_time = time.time()
 
         if lm:
-            # Detect States
-            index_up = tracker.is_finger_up(lm, 8, 6)
-            middle_up = tracker.is_finger_up(lm, 12, 10)
-            ring_up = tracker.is_finger_up(lm, 16, 14)
+            # 2. Get STABILIZED Gesture (No flickering!)
+            active_gesture = tracker.get_stable_gesture(lm)
 
-            # Raw Coordinates
-            raw_x = map_range(lm[8].x, 0, 1, 0, cfg.SCREEN_WIDTH)
-            raw_y = map_range(lm[8].y, 0, 1, 0, cfg.SCREEN_HEIGHT)
+            # 3. Calculate Position (Inside Box -> Full Screen)
+            raw_x = np.interp(lm[8].x * w, (cfg.ACTIVE_AREA_MARGIN, w - cfg.ACTIVE_AREA_MARGIN), (0, cfg.SCREEN_WIDTH))
+            raw_y = np.interp(lm[8].y * h, (cfg.ACTIVE_AREA_MARGIN, h - cfg.ACTIVE_AREA_MARGIN), (0, cfg.SCREEN_HEIGHT))
             
-            # Apply Smoothing
             smooth_x = x_filter(current_time, raw_x)
             smooth_y = y_filter(current_time, raw_y)
 
-            # --- MODE SWITCHING ---
+            # Visual Feedback: Draw point on Index Finger
+            color = cfg.COLOR_INDEX
+            if active_gesture == "PAUSE": color = cfg.COLOR_PAUSE
+            elif active_gesture == "ZOOM": color = cfg.COLOR_ZOOM
+            
+            cv2.circle(frame, (int(lm[8].x * w), int(lm[8].y * h)), 8, color, -1)
+            cv2.putText(frame, f"MODE: {active_gesture}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
 
-            # MODE 3: ZOOM (Index + Middle + Ring)
-            if index_up and middle_up and ring_up:
-                if not zooming:
-                    keyboard.press(Key.ctrl) # Hold Ctrl
-                    zooming = True
-                
-                # Vertical movement controls zoom
-                zoom_delta = (prev_y - smooth_y) / 5
-                if abs(zoom_delta) > 0.5:
-                    mouse.scroll(0, int(zoom_delta * cfg.ZOOM_SPEED))
-                
-                cv2.putText(frame, "ZOOM MODE", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, cfg.COLOR_ZOOM, 2)
-                cv2.line(frame, (int(lm[8].x*w), int(lm[8].y*h)), (int(lm[16].x*w), int(lm[16].y*h)), cfg.COLOR_ZOOM, 3)
+            # --- EXECUTION LOGIC ---
 
-            # MODE 2: SCROLL (Index + Middle)
-            elif index_up and middle_up:
+            # A. PAUSE MODE (Fist)
+            if active_gesture == "PAUSE":
+                # Do nothing. Mouse is frozen.
+                if dragging: 
+                    mouse.release(Button.left)
+                    dragging = False
                 if zooming:
                     keyboard.release(Key.ctrl)
                     zooming = False
 
+            # B. ZOOM MODE (L-Shape)
+            elif active_gesture == "ZOOM":
+                if not zooming:
+                    keyboard.press(Key.ctrl)
+                    zooming = True
+                
+                zoom_delta = (prev_y - smooth_y) / 5
+                if abs(zoom_delta) > 0.2:
+                    mouse.scroll(0, int(zoom_delta * cfg.ZOOM_SPEED))
+
+            # C. SCROLL MODE (Peace Sign)
+            elif active_gesture == "SCROLL":
+                if zooming:
+                    keyboard.release(Key.ctrl)
+                    zooming = False
+                
                 scroll_delta = (prev_y - smooth_y) / 5
-                if abs(scroll_delta) > 0.5:
+                if abs(scroll_delta) > 0.2:
                     mouse.scroll(0, int(scroll_delta * cfg.SCROLL_SPEED))
 
-                cv2.putText(frame, "SCROLL MODE", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, cfg.COLOR_SCROLL, 2)
-
-            # MODE 1: CURSOR (Index Only)
-            elif index_up:
+            # D. MOVE MODE (Index Only)
+            elif active_gesture == "MOVE":
                 if zooming:
                     keyboard.release(Key.ctrl)
                     zooming = False
@@ -89,30 +107,30 @@ def main():
                 try: mouse.position = (smooth_x, smooth_y)
                 except: pass
 
-                # Check Click (Index tip near Thumb tip)
-                dist = calculate_distance(lm[8], lm[4]) * w
-                
-                if dist < cfg.CLICK_THRESHOLD:
+                # CLICKS (Distances)
+                dist_index_thumb = calculate_distance(lm[8], lm[4]) * w
+                dist_middle_thumb = calculate_distance(lm[12], lm[4]) * w
+
+                # Left Click (Index + Thumb)
+                if dist_index_thumb < cfg.CLICK_THRESHOLD:
                     if not dragging:
                         mouse.press(Button.left)
                         dragging = True
-                        cv2.circle(frame, (int(lm[8].x*w), int(lm[8].y*h)), 15, cfg.COLOR_CLICK, -1)
+                        cv2.circle(frame, (int(lm[8].x*w), int(lm[8].y*h)), 15, cfg.COLOR_CLICK, 2)
                 else:
                     if dragging:
                         mouse.release(Button.left)
                         dragging = False
 
-            # IDLE (No fingers / Fist)
-            else:
-                if zooming:
-                    keyboard.release(Key.ctrl)
-                    zooming = False
+                # Right Click (Middle + Thumb)
+                if dist_middle_thumb < cfg.CLICK_THRESHOLD:
+                    mouse.click(Button.right, 1)
+                    time.sleep(0.3)
 
+            # Update Previous Y for scrolling/zooming calculation
             prev_y = smooth_y
 
         cv2.imshow('Virt Mouse HUD', frame)
-        
-        # Press ESC to quit
         if cv2.waitKey(1) & 0xFF == 27:
             if zooming: keyboard.release(Key.ctrl)
             break

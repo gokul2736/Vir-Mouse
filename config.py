@@ -1,24 +1,31 @@
 # config.py
 
-# --- CAMERA SETTINGS ---
+# --- CAMERA ---
 CAMERA_ID = 0
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 MIRROR_MODE = True
 
-# --- PHYSICS & MOVEMENT ---
-SCREEN_WIDTH = 1920   # CHANGE THIS to your actual monitor resolution
-SCREEN_HEIGHT = 1080  # CHANGE THIS to your actual monitor resolution
-MOUSE_SENSITIVITY = 1.5
-SMOOTHING_FACTOR = 0.05  # Lower (0.01-0.05) = Smoother, Higher = Snappier
+# --- INTERACTION BOX ---
+ACTIVE_AREA_MARGIN = 150  # Keep hand inside this box!
 
-# --- GESTURE SETTINGS ---
-CLICK_THRESHOLD = 30     # Distance between thumb/index to trigger click
-SCROLL_SPEED = 4         # Scroll multiplier
-ZOOM_SPEED = 2           # Zoom multiplier
+# --- PHYSICS ---
+SCREEN_WIDTH = 1920
+SCREEN_HEIGHT = 1080
+# INCREASED SMOOTHING: High min_cutoff = "Sticky" cursor (stable).
+FILTER_MIN_CUTOFF = 0.1  # Previously 0.5. 0.1 makes it very smooth.
+FILTER_BETA = 0.1        # Response speed.
 
-# --- VISUALS (BGR Colors) ---
-COLOR_INDEX = (0, 255, 0)      # Green
-COLOR_CLICK = (0, 0, 255)      # Red
+# --- GESTURES ---
+CLICK_THRESHOLD = 40
+SCROLL_SPEED = 5
+ZOOM_SPEED = 3
+
+# --- COLORS (BGR) ---
+COLOR_INDEX = (0, 255, 0)      # Green (Active)
+COLOR_PAUSE = (0, 0, 255)      # Red (Paused/Fist)
+COLOR_CLICK = (0, 255, 255)    # Yellow
+COLOR_BOX = (255, 255, 255)    # White
+# The missing variables caused your error:
+COLOR_ZOOM = (255, 0, 255)     # Magenta 
 COLOR_SCROLL = (255, 255, 0)   # Cyan
-COLOR_ZOOM = (255, 0, 255)     # Magenta
